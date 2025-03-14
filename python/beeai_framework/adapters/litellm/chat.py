@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import logging
 from abc import ABC
 from collections.abc import AsyncGenerator
@@ -25,7 +24,8 @@ from litellm import (  # type: ignore
     get_supported_openai_params,
 )
 from litellm.types.utils import StreamingChoices
-from openai.lib._pydantic import to_strict_json_schema  # TODO: look for an alternative or reimplement
+from openai.lib._pydantic import to_strict_json_schema
+from pydantic import BaseModel
 
 from beeai_framework.adapters.litellm._patch import _patch_litellm_cache
 from beeai_framework.backend.chat import (
@@ -109,7 +109,10 @@ class LiteLLMChatModel(ChatModel, ABC):
         else:
             response = await self._create(
                 ChatModelInput(
-                    messages=input.messages, response_format=input.input_schema, abort_signal=input.abort_signal
+                    messages=input.messages,
+                    response_format=input.input_schema,
+                    # or response_format=self._format_model_response(input.input_schema)
+                    abort_signal=input.abort_signal,
                 ),
                 run,
             )
@@ -118,7 +121,8 @@ class LiteLLMChatModel(ChatModel, ABC):
 
             text_response = response.get_text_content()
             result = parse_broken_json(text_response)
-            # TODO: validate result matches expected schema
+            print(text_response)
+            result = input.input_schema.model_validate(result) if isinstance(input.input_schema, BaseModel) else result
             return ChatModelStructureOutput(object=result)
 
     def _transform_input(self, input: ChatModelInput) -> dict[str, Any]:
@@ -165,6 +169,7 @@ class LiteLLMChatModel(ChatModel, ABC):
                         "description": tool.description,
                         # OpenAI API requires more strict schema in order to perform well and pass the validation.
                         "parameters": to_strict_json_schema(tool.input_schema),
+                        # or self._format_model_response(tool.input_schema)
                     },
                 }
                 for tool in input.tools
@@ -188,7 +193,12 @@ class LiteLLMChatModel(ChatModel, ABC):
         return (
             exclude_none(settings)
             | exclude_none(params)
-            | {"model": f"{self._litellm_provider_id}/{self.model_id}", "messages": messages, "tools": tools}
+            | {
+                "model": f"{self._litellm_provider_id}/{self.model_id}",
+                "messages": messages,
+                "tools": tools,
+                "response_format": to_strict_json_schema(input.response_format) if input.response_format else None,
+            }
         )
 
     def _transform_output(self, chunk: ModelResponse | ModelResponseStream) -> ChatModelOutput:
@@ -221,6 +231,16 @@ class LiteLLMChatModel(ChatModel, ABC):
             finish_reason=finish_reason,
             usage=usage,
         )
+
+    def _format_model_response(self, model: type[BaseModel]) -> dict[str, Any]:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "schema": model.model_json_schema(mode="serialization"),
+                "name": model.__name__,
+                "strict": True,
+            },
+        }
 
 
 LiteLLMChatModel.litellm_debug(False)

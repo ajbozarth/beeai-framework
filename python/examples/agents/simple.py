@@ -1,25 +1,41 @@
 import asyncio
+import json
 import sys
 import traceback
+from typing import Literal
 
-from beeai_framework.agents.react.agent import ReActAgent
-from beeai_framework.agents.react.types import ReActAgentRunOutput
+from pydantic import BaseModel, Field
+
 from beeai_framework.backend.chat import ChatModel
+from beeai_framework.backend.message import UserMessage
 from beeai_framework.errors import FrameworkError
-from beeai_framework.memory.unconstrained_memory import UnconstrainedMemory
-from beeai_framework.tools.search.duckduckgo import DuckDuckGoSearchTool
-from beeai_framework.tools.weather.openmeteo import OpenMeteoTool
 
 
 async def main() -> None:
-    llm = ChatModel.from_name("ollama:granite3.1-dense:8b")
-    agent = ReActAgent(llm=llm, tools=[DuckDuckGoSearchTool(), OpenMeteoTool()], memory=UnconstrainedMemory())
+    #### DO NOT PUSH THIS TO MAIN! THIS IS A TEMP CHANGE FOR TESTING ####
 
-    output: ReActAgentRunOutput = await agent.run("What's the current weather in Las Vegas?").on(
-        "update", lambda data, event: print(f"Agent({data.update.key}) 🤖 : ", data.update.parsed_value)
+    model = ChatModel.from_name("ollama:llama3.1")
+
+    class ProfileSchema(BaseModel):
+        first_name: str = Field(..., min_length=1)
+        last_name: str = Field(..., min_length=1)
+        address: str
+        age: int = Field(..., min_length=1)
+        hobby: str
+        xyzabc: Literal["adsdfsa", "gfsd", "hgdh"] | None = None
+
+    response = await model.create_structure(
+        schema=ProfileSchema,
+        messages=[
+            UserMessage("Generate a profile of a citizen of Europe."),
+        ],
     )
 
-    print("Agent 🤖 : ", output.result.text)
+    print(
+        json.dumps(
+            response.object.model_dump() if isinstance(response.object, BaseModel) else response.object, indent=4
+        )
+    )
 
 
 if __name__ == "__main__":
